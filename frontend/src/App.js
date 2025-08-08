@@ -8,25 +8,39 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [locationInfo, setLocationInfo] = useState(null);
+  const [mapLoading, setMapLoading] = useState(true);
 
-  // Базовый URL API — если есть переменная окружения, берём её
-  const API_BASE = process.env.REACT_APP_API_URL || '';
+  // API endpoints
+  const API_URL = process.env.REACT_APP_API_URL || 'https://your-render-backend.onrender.com';
+  const NOMINATIM_URL = 'https://nominatim.openstreetmap.org';
 
+  // Fetch location data from OpenStreetMap
   const fetchLocationInfo = async (lat, lng) => {
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`
+        `${NOMINATIM_URL}/reverse?format=json&lat=${lat}&lon=${lng}`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'MyFullstackApp/1.0 (my@email.com)'
+          }
+        }
       );
+      
+      if (!response.ok) throw new Error('Location service error');
+      
       const result = await response.json();
       setLocationInfo({
-        city: result.address?.city || result.address?.town,
+        city: result.address?.city || result.address?.town || result.address?.village,
         country: result.address?.country,
       });
     } catch (err) {
-      console.error("Ошибка получения данных о местоположении:", err);
+      console.error("Location fetch error:", err);
+      setError('Failed to get location details');
     }
   };
 
+  // Get user's geolocation
   const getUserLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -38,21 +52,49 @@ function App() {
           setUserLocation(coords);
           fetchLocationInfo(coords.lat, coords.lng);
         },
-        (err) => console.error("Ошибка геолокации:", err)
+        (err) => {
+          console.error("Geolocation error:", err);
+          setError('Please enable location access');
+        }
       );
+    } else {
+      setError('Geolocation not supported');
     }
   };
 
+  // Fetch data from backend
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/api/hello`);
-      if (!response.ok) throw new Error(`Ошибка: ${response.status}`);
-      setData(await response.json());
+      const response = await fetch(`${API_URL}/api/hello`);
+      
+      // Check for JSON response
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`Expected JSON, got: ${text.substring(0, 100)}`);
+      }
+      
+      if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+      
+      const result = await response.json();
+      setData(result);
       setLastUpdated(new Date());
       setError(null);
+      
+      // Cache data
+      localStorage.setItem('apiCache', JSON.stringify(result));
     } catch (err) {
-      setError(err.message);
+      console.error("API fetch error:", err);
+      
+      // Try to use cached data
+      const cached = localStorage.getItem('apiCache');
+      if (cached) {
+        setData(JSON.parse(cached));
+        setError('Using cached data. ' + err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -61,37 +103,40 @@ function App() {
   useEffect(() => {
     getUserLocation();
     fetchData();
+    
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="app">
-      <h1>Мое React-приложение</h1>
+      <h1>My Fullstack App</h1>
       
       <div className="status-panel">
         <button onClick={fetchData} disabled={loading}>
-          {loading ? 'Обновление...' : 'Обновить данные'}
+          {loading ? 'Loading...' : 'Refresh Data'}
         </button>
-        <span>Последнее обновление: {lastUpdated?.toLocaleTimeString()}</span>
+        {lastUpdated && (
+          <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+        )}
       </div>
 
       <div className="response-container">
         {loading ? (
-          <div className="loading">Загрузка данных...</div>
+          <div className="loading">Loading data...</div>
         ) : error ? (
           <div className="error">
-            <p>Ошибка: {error}</p>
-            <button onClick={fetchData}>Повторить</button>
+            <p>Error: {error}</p>
+            <button onClick={fetchData}>Retry</button>
           </div>
         ) : (
           <>
-            <div className="message">{data?.message}</div>
+            {data?.message && <div className="message">{data.message}</div>}
             
             <div className="time-info">
               <div>
-                <h3>Серверное время (Великобритания)</h3>
-                {new Date(data?.timestamp).toLocaleString('en-GB', {
+                <h3>Server Time (UK)</h3>
+                {data?.timestamp && new Date(data.timestamp).toLocaleString('en-GB', {
                   timeZone: 'Europe/London',
                   day: '2-digit',
                   month: '2-digit',
@@ -102,16 +147,20 @@ function App() {
               </div>
 
               {userLocation && (
-                <div>
-                  <h3>Ваше местоположение</h3>
-                  {locationInfo?.city && <p>Город: {locationInfo.city}</p>}
-                  {locationInfo?.country && <p>Страна: {locationInfo.country}</p>}
-                  <p>Координаты: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</p>
+                <div className="location-info">
+                  <h3>Your Location</h3>
+                  {locationInfo?.city && <p>City: {locationInfo.city}</p>}
+                  {locationInfo?.country && <p>Country: {locationInfo.country}</p>}
+                  <p>Coordinates: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</p>
                   
                   <div className="map-container">
+                    {mapLoading && <div className="map-loader">Loading map...</div>}
                     <img 
                       src={`https://static-maps.yandex.ru/1.x/?ll=${userLocation.lng},${userLocation.lat}&z=10&size=300,150&l=map&pt=${userLocation.lng},${userLocation.lat},pm2blm`}
-                      alt="Карта местоположения"
+                      alt="Location map"
+                      crossOrigin="anonymous"
+                      onLoad={() => setMapLoading(false)}
+                      style={{ display: mapLoading ? 'none' : 'block' }}
                     />
                   </div>
                 </div>
