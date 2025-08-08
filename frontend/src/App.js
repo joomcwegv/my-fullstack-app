@@ -9,7 +9,9 @@ function App() {
   const [userLocation, setUserLocation] = useState(null);
   const [locationInfo, setLocationInfo] = useState(null);
 
-  // Получаем информацию о местоположении по координатам
+  // Базовый URL API — если есть переменная окружения, берём её
+  const API_BASE = process.env.REACT_APP_API_URL || '';
+
   const fetchLocationInfo = async (lat, lng) => {
     try {
       const response = await fetch(
@@ -44,7 +46,7 @@ function App() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/hello');
+      const response = await fetch(`${API_BASE}/api/hello`);
       if (!response.ok) throw new Error(`Ошибка: ${response.status}`);
       setData(await response.json());
       setLastUpdated(new Date());
@@ -59,7 +61,7 @@ function App() {
   useEffect(() => {
     getUserLocation();
     fetchData();
-    const interval = setInterval(fetchData, 30000); // Обновление каждые 30 сек
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
